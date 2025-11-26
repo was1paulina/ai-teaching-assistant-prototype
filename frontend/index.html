@@ -1,0 +1,125 @@
+<!-- frontend/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Teaching Assistant - Instructor Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>📚 AI Teaching Assistant</h1>
+                <p class="subtitle">Algebra 101 - Fall 2025</p>
+            </div>
+        </header>
+
+        <!-- Analytics Section -->
+        <section class="analytics-section">
+            <div class="stat-card">
+                <div class="stat-value" id="total-students">-</div>
+                <div class="stat-label">Total Students</div>
+            </div>
+            <div class="stat-card alert">
+                <div class="stat-value" id="at-risk">-</div>
+                <div class="stat-label">At Risk</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="avg-risk-score">-</div>
+                <div class="stat-label">Avg Risk Score</div>
+            </div>
+        </section>
+
+        <!-- Top Struggle Topics -->
+        <section class="topics-section">
+            <h2>🎯 Top Struggle Topics</h2>
+            <div id="topics-list" class="topics-list">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Student List -->
+        <section class="students-section">
+            <div class="section-header">
+                <h2>👥 Students</h2>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="high">🔴 High Risk</button>
+                    <button class="filter-btn" data-filter="medium">🟡 Medium Risk</button>
+                    <button class="filter-btn" data-filter="low">🟢 Low Risk</button>
+                </div>
+            </div>
+
+            <div id="students-grid" class="students-grid">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Student Detail Modal -->
+        <div id="student-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modal-student-name">Student Name</h2>
+                    <button class="close-btn" onclick="closeModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="student-info">
+                        <div class="info-row">
+                            <span class="label">Risk Level:</span>
+                            <span id="modal-risk" class="risk-badge">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Risk Score:</span>
+                            <span id="modal-risk-score">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Last Active:</span>
+                            <span id="modal-last-active">-</span>
+                        </div>
+                    </div>
+
+                    <div class="assignments-section">
+                        <h3>📝 Recent Assignments</h3>
+                        <div id="modal-assignments" class="assignments-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <div class="topics-section">
+                        <h3>⚠️ Struggling Topics</h3>
+                        <div id="modal-topics" class="topic-tags">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <div class="quiz-section">
+                        <h3>🎯 Generate Practice Quiz</h3>
+                        <select id="quiz-topic-select" class="topic-select">
+                            <option value="">Select a topic...</option>
+                        </select>
+                        <button id="generate-quiz-btn" class="btn-primary" onclick="generateQuiz()">
+                            Generate Quiz
+                        </button>
+                    </div>
+
+                    <!-- Quiz Display -->
+                    <div id="quiz-container" class="quiz-container hidden">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loading" class="loading-overlay hidden">
+            <div class="spinner"></div>
+            <p>Generating quiz with AI...</p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
