@@ -1,15 +1,15 @@
 # backend/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional
 import os
 from dotenv import load_dotenv
-import anthropic
 from pydantic import BaseModel
 
 from models import Student, QuizResponse, CourseAnalytics, QuizQuestion
 from mock_data import generate_mock_students
 from risk_engine import calculate_risk_score, get_risk_level
+from claude_service import ClaudeService, ClaudeAPIError, FallbackQuizGenerator
 
 class QuizRequest(BaseModel):
     student_id: str
@@ -32,12 +32,37 @@ app.add_middleware(
 # In-memory storage for demo
 students_db: List[Student] = []
 
+# Claude service instance (initialized on startup)
+claude_service: Optional[ClaudeService] = None
+use_fallback: bool = False
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize mock data on startup"""
-    global students_db
+    """Initialize mock data and Claude service on startup"""
+    global students_db, claude_service, use_fallback
+
     students_db = generate_mock_students(30)
     print(f"✅ Generated {len(students_db)} mock students")
+
+    # Initialize Claude service
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+
+    if api_key:
+        try:
+            # Configure retry settings (3 retries, 1 second initial delay)
+            claude_service = ClaudeService(
+                api_key=api_key,
+                max_retries=3,
+                initial_retry_delay=1.0
+            )
+            print("✅ Claude service initialized with error handling")
+        except ClaudeAPIError as e:
+            print(f"⚠️ Claude service initialization failed: {e.message}")
+            print("   Using fallback quiz generator")
+            use_fallback = True
+    else:
+        print("⚠️ No ANTHROPIC_API_KEY found. Using fallback quiz generator.")
+        use_fallback = True
 
 @app.get("/")
 async def root():
@@ -98,113 +123,83 @@ async def get_analytics():
 
 @app.post("/api/quiz/generate", response_model=QuizResponse)
 async def generate_quiz(request: QuizRequest):
-    """Generate practice quiz using Claude API"""
-    
+    """Generate practice quiz using Claude API with robust error handling"""
+
     print(f"\n🎯 Quiz generation requested:")
     print(f"   Student: {request.student_id}")
     print(f"   Topic: {request.topic}")
     print(f"   Questions: {request.num_questions}")
-    
+
     # Get student context
     student = next((s for s in students_db if s.id == request.student_id), None)
     if not student:
         print(f"❌ Student not found: {request.student_id}")
         raise HTTPException(status_code=404, detail="Student not found")
-    
+
     print(f"✅ Student found: {student.name}")
-    
-    # Initialize Claude client
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    print(f"🔑 API Key loaded: {api_key[:20] if api_key else 'NONE'}...")
-    
-    if not api_key:
-        print("❌ No API key found in environment!")
-        raise HTTPException(status_code=500, detail="Claude API key not configured")
-    
-    client = anthropic.Anthropic(api_key=api_key)
-    print("✅ Anthropic client initialized")
-    
+
     # Format topic for display
     topic_display = request.topic.replace("_", " ").title()
-    
-    # Create prompt for Claude
-    prompt = f"""Generate {request.num_questions} multiple-choice algebra questions about {topic_display} for a high school student.
 
-Student context:
-- Current grade average: {student.assignments[-1].score:.0f}%
-- Struggling with: {', '.join(student.struggling_topics)}
+    # Prepare student context for Claude
+    student_context = {
+        "grade_average": f"{student.assignments[-1].score:.0f}%" if student.assignments else "N/A",
+        "struggling_topics": ', '.join(student.struggling_topics) if student.struggling_topics else "None"
+    }
 
-Requirements:
-1. Questions should be at an appropriate difficulty level
-2. Include 4 options (A, B, C, D) per question  
-3. Provide detailed explanations for correct answers
-4. Reference relevant math concepts in explanations
+    questions = None
+    used_fallback = False
 
-Output ONLY valid JSON in this exact format (no markdown, no extra text):
-[
-  {{
-    "question": "Solve for x: 2x + 5 = 13",
-    "options": {{
-      "A": "x = 3",
-      "B": "x = 4", 
-      "C": "x = 5",
-      "D": "x = 6"
-    }},
-    "correct": "B",
-    "explanation": "Subtract 5 from both sides: 2x = 8. Then divide by 2: x = 4. This uses the principle of inverse operations.",
-    "topic": "{request.topic}"
-  }}
-]"""
-    
-    try:
-        print("📞 Calling Claude API...")
-        
-        # Call Claude API
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
+    # Try to use Claude API if available
+    if not use_fallback and claude_service:
+        try:
+            print("📞 Attempting to generate quiz with Claude API...")
+            questions = await claude_service.generate_quiz_questions(
+                topic=request.topic,
+                num_questions=request.num_questions,
+                student_context=student_context
+            )
+            print("🎉 Quiz generated successfully with Claude API!")
+
+        except ClaudeAPIError as e:
+            print(f"⚠️ Claude API error: {e.message}")
+
+            # Check if we should use fallback
+            if e.original_error:
+                print(f"   Original error: {type(e.original_error).__name__}")
+
+            # Use fallback for certain errors
+            print("🔄 Falling back to offline quiz generator...")
+            questions = FallbackQuizGenerator.generate_fallback_questions(
+                topic=request.topic,
+                num_questions=request.num_questions
+            )
+            used_fallback = True
+
+            # Return user-friendly error with fallback questions
+            print("✅ Generated fallback quiz")
+
+    # Use fallback if Claude service not available
+    if questions is None:
+        print("🔄 Using fallback quiz generator (Claude API not configured)...")
+        questions = FallbackQuizGenerator.generate_fallback_questions(
+            topic=request.topic,
+            num_questions=request.num_questions
         )
-        
-        print("✅ Claude API responded!")
-        
-        # Parse response
-        response_text = message.content[0].text.strip()
-        print(f"📝 Response length: {len(response_text)} characters")
-        
-        # Remove markdown code blocks if present
-        if response_text.startswith("```"):
-            response_text = response_text.split("```")[1]
-            if response_text.startswith("json"):
-                response_text = response_text[4:]
-        response_text = response_text.strip()
-        
-        print(f"🔍 Cleaned response preview: {response_text[:100]}...")
-        
-        # Parse JSON
-        import json
-        questions_data = json.loads(response_text)
-        print(f"✅ Parsed {len(questions_data)} questions")
-        
-        # Convert to QuizQuestion models
-        questions = [QuizQuestion(**q) for q in questions_data]
-        
-        print("🎉 Quiz generation successful!")
-        
-        return QuizResponse(
-            quiz_id=f"quiz-{request.student_id}-{request.topic}",
-            student_id=request.student_id,
-            topic=topic_display,
-            questions=questions
-        )
-        
-    except Exception as e:
-        print(f"\n❌ ERROR during quiz generation:")
-        print(f"   Type: {type(e).__name__}")
-        print(f"   Message: {str(e)}")
-        import traceback
-        print(f"   Traceback:\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate quiz: {str(e)}")
+        used_fallback = True
+        print("✅ Generated fallback quiz")
+
+    # Create response
+    quiz_id = f"quiz-{request.student_id}-{request.topic}"
+    if used_fallback:
+        quiz_id += "-fallback"
+
+    return QuizResponse(
+        quiz_id=quiz_id,
+        student_id=request.student_id,
+        topic=topic_display,
+        questions=questions
+    )
  
 if __name__ == "__main__":
     import uvicorn
